@@ -5,7 +5,10 @@ import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.StreamTokenizer;
+import java.io.StringReader;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -205,7 +208,7 @@ class Rule implements Clause {
         Set<VariableTerm> posVars = new HashSet<>();
         Set<VariableTerm> negVars = new HashSet<>();
         for (Premise p : body) {
-            if (p instanceof  PositiveAtom) {
+            if (p instanceof PositiveAtom) {
                 posVars.addAll(p.variables());
             } else if (p instanceof NegativeAtom) {
                 negVars.addAll(p.variables());
@@ -218,9 +221,10 @@ class Rule implements Clause {
         return errors;
     }
 
-    List<VariableTerm> bodyVariables() {
-        //TODO
-        return null;
+    Set<VariableTerm> bodyVariables() {
+        return body.stream()
+                .flatMap(p -> p.variables().stream())
+                .collect(Collectors.toSet());
     }
 }
 
@@ -460,6 +464,14 @@ class DatalogValidationError {
         this.astElement = astElement;
         this.description = description;
     }
+
+    @Override
+    public String toString() {
+        return "DatalogValidationError{" +
+                "astElement=" + astElement +
+                ", description='" + description + '\'' +
+                '}';
+    }
 }
 
 class FactCollection {
@@ -502,5 +514,6 @@ public class Josh {
             System.out.println(f.toRow());
         }
         System.out.println(p);
+        System.out.println(p.validate());
     }
 }
