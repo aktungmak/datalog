@@ -1,3 +1,4 @@
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.types.DataType;
@@ -6,6 +7,7 @@ import org.apache.spark.sql.types.StructType;
 
 import java.io.*;
 import java.util.*;
+import java.util.stream.Collectors;
 
 interface Premise {
     static Premise parse(DatalogTokenizer dt) throws DatalogParseException {
@@ -15,6 +17,8 @@ interface Premise {
             return PositiveAtom.parse(dt);
         }
     }
+
+    List<VariableTerm> variables();
 }
 
 interface Term {
@@ -31,61 +35,7 @@ interface Term {
     }
 }
 
-class Program {
-    final Set<Clause> clauses;
-
-    Program() {
-        this.clauses = new HashSet<>();
-    }
-
-    static Program parse(DatalogTokenizer dt) throws DatalogParseException {
-        Program p = new Program();
-        while (dt.hasNext()) {
-            p.addClauses(Clause.parse(dt));
-        }
-        return p;
-    }
-
-    List<DatalogValidationError> validate() {
-        ArrayList<DatalogValidationError> errors = new ArrayList<>();
-        for (Clause clause : this.clauses) {
-            errors.addAll(clause.validate());
-        }
-        return errors;
-    }
-
-    List<Program> stratify() {
-        return null;
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        for (Clause clause : this.clauses) {
-            sb.append(clause.toString()).append('\n');
-        }
-        return sb.toString();
-    }
-
-    void addClauses(List<Clause> clauses) {
-        this.clauses.addAll(clauses);
-    }
-
-    FactCollection evaluate(FactCollection edb) {
-        //TODO
-        return null;
-    }
-}
-
-class Clause {
-    final PositiveAtom head;
-    final List<Premise> body;
-
-    Clause(PositiveAtom head, List<Premise> body) {
-        this.head = head;
-        this.body = body;
-    }
-
+interface Clause {
     static List<Clause> parse(DatalogTokenizer dt) throws DatalogParseException {
         ArrayList<Clause> clauses = new ArrayList<>();
 
@@ -95,7 +45,7 @@ class Clause {
         // handle facts
         if (dt.peek().equals(".")) {
             dt.consumeExpected(".");
-            clauses.add(new Clause(head, body));
+            clauses.add(new Fact(head));
             return clauses;
         }
 
@@ -108,11 +58,11 @@ class Clause {
                 case ",":
                     break;
                 case ";":
-                    clauses.add(new Clause(head, body));
+                    clauses.add(new Rule(head, body));
                     body = new ArrayList<>();
                     break;
                 case ".":
-                    clauses.add(new Clause(head, body));
+                    clauses.add(new Rule(head, body));
                     break loop;
                 default:
                     throw new DatalogParseException("unexpected terminator");
@@ -121,47 +71,160 @@ class Clause {
         return clauses;
     }
 
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(this.head.toString());
-        if (this.body.size() > 0) {
-            sb.append(": \n");
+    List<DatalogValidationError> validate();
+}
+
+class Program {
+    final Set<Clause> clauses;
+
+    Program() {
+        clauses = new HashSet<>();
+    }
+
+    static Program parse(DatalogTokenizer dt) throws DatalogParseException {
+        Program p = new Program();
+        while (dt.hasNext()) {
+            p.addClauses(Clause.parse(dt));
         }
-        for (Premise premise : this.body) {
-            sb.append(premise.toString()).append(",\n");
-        }
-        return sb.append('.').toString();
+        return p;
     }
 
     List<DatalogValidationError> validate() {
-        if (this.body.size() == 0) {
-            return validateAsFact();
-        } else {
-            return validateAsRule();
+        ArrayList<DatalogValidationError> errors = new ArrayList<>();
+        for (Clause clause : clauses) {
+            errors.addAll(clause.validate());
         }
+        return errors;
     }
 
-    List<DatalogValidationError> validateAsFact() {
+    List<Program> stratify() {
+        return null;
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        for (Clause clause : clauses) {
+            sb.append(clause.toString()).append('\n');
+        }
+        return sb.toString();
+    }
+
+    void addClauses(List<Clause> newClauses) {
+        clauses.addAll(newClauses);
+    }
+
+    FactCollection evaluate(FactCollection edb) {
+        //TODO
+        return null;
+    }
+
+    List<Fact> facts() {
+        return clauses.stream()
+                .filter(Fact.class::isInstance)
+                .map(Fact.class::cast)
+                .collect(Collectors.toList());
+    }
+}
+
+class Fact implements Clause {
+    final PositiveAtom atom;
+
+    Fact(PositiveAtom atom) {
+        this.atom = atom;
+    }
+
+    @Override
+    public String toString() {
+        return atom.toString();
+    }
+
+    Row toRow() {
+        return RowFactory.create(atom.args.toArray());
+    }
+
+    StructType getStructType() {
+        StructType st = new StructType();
+        DataType dt = null;
+        int i = 1;
+        for (Term arg : atom.args) {
+            if (arg instanceof ConstantTerm) {
+                dt = DataTypes.StringType;
+            } else if (arg instanceof NumberTerm) {
+                dt = DataTypes.IntegerType;
+            }
+            st.add(String.valueOf(i), dt, false);
+        }
+        return st;
+    }
+
+    public List<DatalogValidationError> validate() {
         ArrayList<DatalogValidationError> errors = new ArrayList<>();
-        for (Term arg : this.head.args) {
+        for (Term arg : atom.args) {
             if (arg instanceof VariableTerm) {
                 errors.add(new DatalogValidationError(this, "Variable term as argument to a fact"));
             }
         }
         return errors;
     }
+}
 
-    List<DatalogValidationError> validateAsRule() {
+
+class Rule implements Clause {
+    final PositiveAtom head;
+    final List<Premise> body;
+
+    Rule(PositiveAtom head, List<Premise> body) {
+        this.head = head;
+        this.body = body;
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(head.toString());
+        if (body.size() > 0) {
+            sb.append(": \n");
+        }
+        for (Premise premise : body) {
+            sb.append(premise.toString()).append(",\n");
+        }
+        return sb.append('.').toString();
+    }
+
+    public List<DatalogValidationError> validate() {
         ArrayList<DatalogValidationError> errors = new ArrayList<>();
-        // TODO implement rule validation
         // range restriction: all variables in head appear in body
+        Set<VariableTerm> headVars = new HashSet<>(head.variables());
+        Set<VariableTerm> bodyVars = new HashSet<>(bodyVariables());
+        headVars.removeAll(bodyVars);
+        if (headVars.size() > 0) {
+            errors.add(new DatalogValidationError(headVars, "unrestricted head vars: "));
+        }
         // safety cond: every var must appear in one positive atom
+        Set<VariableTerm> posVars = new HashSet<>();
+        Set<VariableTerm> negVars = new HashSet<>();
+        for (Premise p : body) {
+            if (p instanceof  PositiveAtom) {
+                posVars.addAll(p.variables());
+            } else if (p instanceof NegativeAtom) {
+                negVars.addAll(p.variables());
+            }
+        }
+        negVars.removeAll(posVars);
+        if (negVars.size() > 0) {
+            errors.add(new DatalogValidationError(negVars, "neg vars not in pos premise: "));
+        }
         return errors;
+    }
+
+    List<VariableTerm> bodyVariables() {
+        //TODO
+        return null;
     }
 }
 
-class PositiveAtom implements Premise, Serializable {
+class PositiveAtom implements Premise {
     final int arity;
     final String predicateSymbol;
     final List<Term> args;
@@ -189,24 +252,32 @@ class PositiveAtom implements Premise, Serializable {
     }
 
     @Override
+    public List<VariableTerm> variables() {
+        return args.stream()
+                .filter(VariableTerm.class::isInstance)
+                .map(VariableTerm.class::cast)
+                .collect(Collectors.toList());
+    }
+
+    @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append(this.predicateSymbol).append("(");
-        for (Term arg : this.args) {
+        sb.append(predicateSymbol).append("(");
+        for (Term arg : args) {
             sb.append(arg.toString()).append(", ");
         }
         return sb.append(')').toString();
     }
 
     Row toRow() {
-        return RowFactory.create(this.args.toArray());
+        return RowFactory.create(args.toArray());
     }
 
     StructType getStructType() {
         StructType st = new StructType();
-        DataType dt;
+        DataType dt = null;
         int i = 1;
-        for (Term arg : this.args) {
+        for (Term arg : args) {
             if (arg instanceof ConstantTerm) {
                 dt = DataTypes.StringType;
             } else if (arg instanceof NumberTerm) {
@@ -221,8 +292,8 @@ class PositiveAtom implements Premise, Serializable {
 class NegativeAtom implements Premise {
     final PositiveAtom atom;
 
-    NegativeAtom(PositiveAtom pa) {
-        this.atom = pa;
+    NegativeAtom(PositiveAtom atom) {
+        this.atom = atom;
     }
 
     static NegativeAtom parse(DatalogTokenizer dt) throws DatalogParseException {
@@ -232,9 +303,16 @@ class NegativeAtom implements Premise {
     }
 
     @Override
-    public String toString() {
-        return "~" + this.atom.toString();
+    public List<VariableTerm> variables() {
+        return atom.variables();
     }
+
+    @Override
+    public String toString() {
+        return "~" + atom.toString();
+    }
+
+
 }
 
 class VariableTerm implements Term {
@@ -310,7 +388,7 @@ class DatalogTokenizer {
     }
 
     private String tokenToString(int token) throws DatalogParseException {
-        switch (this.st.ttype) {
+        switch (st.ttype) {
             case StreamTokenizer.TT_EOF:
                 throw new DatalogParseException("Unexpected EOF");
             case StreamTokenizer.TT_EOL:
@@ -318,7 +396,7 @@ class DatalogTokenizer {
             case StreamTokenizer.TT_NUMBER:
                 throw new AssertionError("invalid tokenizer state2");
             case StreamTokenizer.TT_WORD:
-                return this.st.sval;
+                return st.sval;
             default:
                 return Character.toString((char) token);
         }
@@ -326,7 +404,7 @@ class DatalogTokenizer {
 
     String next() throws DatalogParseException {
         try {
-            return tokenToString(this.st.nextToken());
+            return tokenToString(st.nextToken());
         } catch (IOException e) {
             throw new DatalogParseException(e);
         }
@@ -385,10 +463,10 @@ class DatalogValidationError {
 }
 
 class FactCollection {
-    HashMap<String, List> facts;
+    HashMap<String, Dataset> facts;
 
     FactCollection() {
-        this.facts = new HashMap<>();
+        facts = new HashMap<>();
     }
 
 }
@@ -405,7 +483,7 @@ class BottomUpEngine {
         for (Program stratum : strata) {
             edb2 = stratum.evaluate(edb1);
         }
-        this.facts = edb1;
+        facts = edb1;
     }
 
     Set<PositiveAtom> query(PositiveAtom atom) {
@@ -419,9 +497,9 @@ public class Josh {
         Reader r = new StringReader("i(3, 4). aaa(A, B): b(b, A, 2), c(c, B). q(a, b). m(F): ~t(F, a); w(s, m).");
         DatalogTokenizer dt = new DatalogTokenizer(r);
         Program p = Program.parse(dt);
-        for (Clause c : p.clauses) {
-            c.head.getStructType();
-            System.out.println(c.head.toRow());
+        for (Fact f : p.facts()) {
+            f.getStructType();
+            System.out.println(f.toRow());
         }
         System.out.println(p);
     }
