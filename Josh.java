@@ -100,7 +100,7 @@ class Program {
         return errors;
     }
 
-    List<Program> stratify() {
+    List<List<Rule>> stratify() {
         return null;
     }
 
@@ -117,15 +117,18 @@ class Program {
         clauses.addAll(newClauses);
     }
 
-    FactCollection evaluate(FactCollection edb) {
-        //TODO
-        return null;
-    }
 
     List<Fact> facts() {
         return clauses.stream()
                 .filter(Fact.class::isInstance)
                 .map(Fact.class::cast)
+                .collect(Collectors.toList());
+    }
+
+    List<Rule> rules() {
+        return clauses.stream()
+                .filter(Rule.class::isInstance)
+                .map(Rule.class::cast)
                 .collect(Collectors.toList());
     }
 }
@@ -481,22 +484,35 @@ class FactCollection {
         facts = new HashMap<>();
     }
 
+    FactCollection(List<Fact> facts) {
+        this();
+        // TODO initialise based on a list of facts
+
+    }
 }
 
 class BottomUpEngine {
     FactCollection facts;
 
     void evaluate(Program program) {
-        program.validate();
-        List<Program> strata = program.stratify();
-        FactCollection edb1 = new FactCollection();
-        FactCollection edb2 = new FactCollection();
-
-        for (Program stratum : strata) {
-            edb2 = stratum.evaluate(edb1);
+        if (program.validate().size() > 0) {
+            throw new IllegalArgumentException("invalid program");
         }
-        facts = edb1;
+        List<List<Rule>> strata = program.stratify();
+        FactCollection stable = new FactCollection(program.facts());
+        FactCollection current = new FactCollection();
+        FactCollection previous = new FactCollection();
+
+        for (List<Rule> stratum : strata) {
+            // TODO implement seminaive
+            current = apply(stratum, previous);
+        }
     }
+
+    FactCollection apply(List<Rule> rules, FactCollection edb) {
+        return edb;
+    }
+
 
     Set<PositiveAtom> query(PositiveAtom atom) {
         return new HashSet<>();
