@@ -42,13 +42,13 @@ interface Clause {
     static List<Clause> parse(DatalogTokenizer dt) throws DatalogParseException {
         ArrayList<Clause> clauses = new ArrayList<>();
 
-        PositiveAtom head = PositiveAtom.parse(dt);
+        Atom atom = Atom.parse(dt);
         ArrayList<Premise> body = new ArrayList<>();
 
         // handle facts
         if (dt.peek().equals(".")) {
             dt.consumeExpected(".");
-            clauses.add(new Fact(head));
+            clauses.add(new Fact(atom));
             return clauses;
         }
 
@@ -61,11 +61,11 @@ interface Clause {
                 case ",":
                     break;
                 case ";":
-                    clauses.add(new Rule(head, body));
+                    clauses.add(new Rule(atom, body));
                     body = new ArrayList<>();
                     break;
                 case ".":
-                    clauses.add(new Rule(head, body));
+                    clauses.add(new Rule(atom, body));
                     break loop;
                 default:
                     throw new DatalogParseException("unexpected terminator");
@@ -119,41 +119,28 @@ class Program {
 
 
     List<Fact> facts() {
-        return clauses.stream()
-                .filter(Fact.class::isInstance)
-                .map(Fact.class::cast)
-                .collect(Collectors.toList());
+        return clauses.stream().filter(Fact.class::isInstance).map(Fact.class::cast).collect(Collectors.toList());
     }
 
     List<Rule> rules() {
-        return clauses.stream()
-                .filter(Rule.class::isInstance)
-                .map(Rule.class::cast)
-                .collect(Collectors.toList());
+        return clauses.stream().filter(Rule.class::isInstance).map(Rule.class::cast).collect(Collectors.toList());
     }
 }
 
-class Fact implements Clause {
-    final PositiveAtom atom;
-
-    Fact(PositiveAtom atom) {
-        this.atom = atom;
-    }
-
-    @Override
-    public String toString() {
-        return atom.toString();
+class Fact extends Atom implements Clause {
+    Fact(Atom atom) {
+        super(atom.predicateSymbol, atom.args);
     }
 
     Row toRow() {
-        return RowFactory.create(atom.args.toArray());
+        return RowFactory.create(args.toArray());
     }
 
     StructType getStructType() {
         StructType st = new StructType();
         DataType dt = null;
         int i = 1;
-        for (Term arg : atom.args) {
+        for (Term arg : args) {
             if (arg instanceof ConstantTerm) {
                 dt = DataTypes.StringType;
             } else if (arg instanceof NumberTerm) {
@@ -166,7 +153,7 @@ class Fact implements Clause {
 
     public List<DatalogValidationError> validate() {
         ArrayList<DatalogValidationError> errors = new ArrayList<>();
-        for (Term arg : atom.args) {
+        for (Term arg : args) {
             if (arg instanceof VariableTerm) {
                 errors.add(new DatalogValidationError(this, "Variable term as argument to a fact"));
             }
@@ -180,15 +167,15 @@ class Rule implements Clause {
     final PositiveAtom head;
     final List<Premise> body;
 
-    Rule(PositiveAtom head, List<Premise> body) {
-        this.head = head;
+    Rule(Atom head, List<Premise> body) {
+        this.head = new PositiveAtom(head);
         this.body = body;
     }
 
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append(head.toString());
+        sb.append(head);
         if (body.size() > 0) {
             sb.append(": \n");
         }
@@ -225,24 +212,22 @@ class Rule implements Clause {
     }
 
     Set<VariableTerm> bodyVariables() {
-        return body.stream()
-                .flatMap(p -> p.variables().stream())
-                .collect(Collectors.toSet());
+        return body.stream().flatMap(p -> p.variables().stream()).collect(Collectors.toSet());
     }
 }
 
-class PositiveAtom implements Premise {
+class Atom {
     final int arity;
     final String predicateSymbol;
     final List<Term> args;
 
-    PositiveAtom(String predicateSymbol, List<Term> args) {
+    Atom(String predicateSymbol, List<Term> args) {
         this.predicateSymbol = predicateSymbol;
         this.args = args;
         this.arity = args.size();
     }
 
-    static PositiveAtom parse(DatalogTokenizer dt) throws DatalogParseException {
+    static Atom parse(DatalogTokenizer dt) throws DatalogParseException {
         String predicateSymbol = dt.next();
         ArrayList<Term> args = new ArrayList<>();
 
@@ -255,15 +240,11 @@ class PositiveAtom implements Premise {
             args.add(Term.parse(token));
             dt.consumeOptional(",");
         }
-        return new PositiveAtom(predicateSymbol, args);
+        return new Atom(predicateSymbol, args);
     }
 
-    @Override
     public List<VariableTerm> variables() {
-        return args.stream()
-                .filter(VariableTerm.class::isInstance)
-                .map(VariableTerm.class::cast)
-                .collect(Collectors.toList());
+        return args.stream().filter(VariableTerm.class::isInstance).map(VariableTerm.class::cast).collect(Collectors.toList());
     }
 
     @Override
@@ -276,50 +257,37 @@ class PositiveAtom implements Premise {
         return sb.append(')').toString();
     }
 
-    Row toRow() {
-        return RowFactory.create(args.toArray());
+
+}
+
+class PositiveAtom extends Atom implements Premise {
+
+    public PositiveAtom(Atom atom) {
+        super(atom.predicateSymbol, atom.args);
     }
 
-    StructType getStructType() {
-        StructType st = new StructType();
-        DataType dt = null;
-        int i = 1;
-        for (Term arg : args) {
-            if (arg instanceof ConstantTerm) {
-                dt = DataTypes.StringType;
-            } else if (arg instanceof NumberTerm) {
-                dt = DataTypes.IntegerType;
-            }
-            st.add(String.valueOf(i), dt, false);
-        }
-        return st;
+    static PositiveAtom parse(DatalogTokenizer dt) throws DatalogParseException {
+        Atom atom = Atom.parse(dt);
+        return new PositiveAtom(atom);
     }
 }
 
-class NegativeAtom implements Premise {
-    final PositiveAtom atom;
+class NegativeAtom extends Atom implements Premise {
 
-    NegativeAtom(PositiveAtom atom) {
-        this.atom = atom;
+    public NegativeAtom(Atom atom) {
+        super(atom.predicateSymbol, atom.args);
     }
 
     static NegativeAtom parse(DatalogTokenizer dt) throws DatalogParseException {
         dt.consumeExpected("~");
-        PositiveAtom atom = PositiveAtom.parse(dt);
+        Atom atom = Atom.parse(dt);
         return new NegativeAtom(atom);
     }
 
     @Override
-    public List<VariableTerm> variables() {
-        return atom.variables();
-    }
-
-    @Override
     public String toString() {
-        return "~" + atom.toString();
+        return "~" + super.toString();
     }
-
-
 }
 
 class VariableTerm implements Term {
@@ -470,10 +438,7 @@ class DatalogValidationError {
 
     @Override
     public String toString() {
-        return "DatalogValidationError{" +
-                "astElement=" + astElement +
-                ", description='" + description + '\'' +
-                '}';
+        return "DatalogValidationError{" + "astElement=" + astElement + ", description='" + description + '\'' + '}';
     }
 }
 
