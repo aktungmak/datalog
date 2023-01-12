@@ -1,9 +1,12 @@
 import token
 from collections import deque
+from functools import reduce
 from io import StringIO
 from tokenize import generate_tokens, TokenInfo
-from typing import Optional
+from typing import Optional, Dict, Any
 import pandas as pd
+
+DatabaseInstance = dict[tuple[str, int], pd.DataFrame]
 
 
 class ParseError(Exception):
@@ -137,6 +140,14 @@ class Premise:
                 tokenizer.consume(".")
                 break
 
+    @property
+    def pred_sym(self) -> str:
+        return self.atom.pred_sym
+
+    @property
+    def arity(self) -> int:
+        return len(self.atom.args)
+
 
 class Atom:
     @classmethod
@@ -210,6 +221,7 @@ class Fact(Clause, Atom):
         self.atom = atom
         self.pred_sym = atom.pred_sym
         self.arg_values = [a.value for a in self.atom.args]
+        self.arity = len(self.atom.args)
 
     def validate(self) -> list[ValidationError]:
         return [
@@ -226,6 +238,9 @@ class Rule(Clause):
     def __init__(self, head: Atom, body: list[Premise]):
         self.head = head
         self.body = body
+        # TODO calculate arities more cleanly
+        self.pred_sym = head.pred_sym
+        self.arity = len(head.args)
 
     def validate(self) -> list[ValidationError]:
         return self.validate_range_restriction() + self.validate_negation_safety()
@@ -247,6 +262,7 @@ class Rule(Clause):
 
 
 class Program:
+
     @classmethod
     def parse(cls, tokenizer: Tokenizer):
         clauses = [clause for clause in Clause.parse_all(tokenizer)]
@@ -256,9 +272,14 @@ class Program:
         self.clauses = clauses
         self.facts = [c for c in self.clauses if isinstance(c, Fact)]
         self.rules = [c for c in self.clauses if isinstance(c, Rule)]
-        self.edb = {}
+        grouped_facts = {}
+        # TODO add arity to key
         for fact in self.facts:
-            self.edb.setdefault(fact.pred_sym, []).append(fact.arg_values)
+            grouped_facts.setdefault((fact.pred_sym, fact.arity), []).append(fact.arg_values)
+        self.edb = {}
+        for key, rows in grouped_facts.items():
+            self.edb[key] = pd.DataFrame(rows)
+        self.edb = {key: pd.DataFrame(rows) for key, rows in grouped_facts.items()}
 
     def validate(self) -> list[ValidationError]:
         return sum([c.validate() for c in self.clauses], [])
@@ -269,3 +290,17 @@ class Program:
     def stratify(self) -> list:
         # TODO stratify into a list of subprograms
         pass
+
+
+def immcon(dbi: DatabaseInstance, rule: Rule) -> DatabaseInstance:
+    tables = []
+    for p in rule.body:
+        df = dbi[(p.pred_sym, p.arity)]
+        df.columns = [t.name if isinstance(t, VariableTerm) else hash(t) for t in p.args]
+        for col, t in zip(df.columns, p.args):
+            if not isinstance(t, VariableTerm):
+                df = df[df[col] == t.value]
+        tables.append(df)
+    # natural join all the tables
+    dbi[rule.pred_sym, rule.arity] = reduce(pd.DataFrame.merge, tables)
+    return dbi
