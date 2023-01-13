@@ -3,7 +3,7 @@ from collections import deque
 from functools import reduce
 from io import StringIO
 from tokenize import generate_tokens, TokenInfo
-from typing import Optional, Dict, Any
+from typing import Optional
 import pandas as pd
 
 DatabaseInstance = dict[tuple[str, int], pd.DataFrame]
@@ -26,7 +26,7 @@ class ValidationError(Exception):
 
 
 class Tokenizer:
-    ignored_token_types = [token.NEWLINE]
+    ignored_token_types = [token.NEWLINE, token.INDENT]
 
     def __init__(self, datalog_string: str):
         self._gen = generate_tokens(StringIO(datalog_string).readline)
@@ -120,15 +120,31 @@ class NumberTerm(Term):
         return f"NumberTerm(value={self.value})"
 
 
+class Atom:
+    @classmethod
+    def parse(cls, tokenizer: Tokenizer, negated: bool = False):
+        pred_sym_token = tokenizer.consume()
+        tokenizer.consume("(")
+        args = list(Term.parse_all(tokenizer))
+        return Atom(pred_sym_token, args, negated=negated)
+
+    def __init__(self, pred_sym_token: TokenInfo, args: list[Term], negated=False):
+        self._pred_sym_token = pred_sym_token
+        self.pred_sym = pred_sym_token.string
+        self.args = args
+        self.arity = len(args)
+        self.negated = negated
+        self.vars = [t for t in self.args if isinstance(t, VariableTerm)]
+
+    def __repr__(self) -> str:
+        return f"Atom(pred_sym={self.pred_sym}, args={self.args}, negated={self.negated})"
+
+
 class Premise:
     @classmethod
-    def parse_one(cls, tokenizer: Tokenizer):
-        if tokenizer.try_consume("~"):
-            atom = Atom.parse(tokenizer)
-            return NegativeAtom(atom)
-        else:
-            atom = Atom.parse(tokenizer)
-            return PositiveAtom(atom)
+    def parse_one(cls, tokenizer: Tokenizer) -> Atom:
+        negated = tokenizer.try_consume("~")
+        return Atom.parse(tokenizer, negated=negated)
 
     @classmethod
     def parse_all(cls, tokenizer: Tokenizer):
@@ -140,70 +156,17 @@ class Premise:
                 tokenizer.consume(".")
                 break
 
-    @property
-    def pred_sym(self) -> str:
-        return self.atom.pred_sym
-
-    @property
-    def arity(self) -> int:
-        return len(self.atom.args)
-
-
-class Atom:
-    @classmethod
-    def parse(cls, tokenizer: Tokenizer):
-        pred_sym_token = tokenizer.consume()
-        tokenizer.consume("(")
-        args = list(Term.parse_all(tokenizer))
-        return Atom(pred_sym_token, args)
-
-    def __init__(self, pred_sym_token: TokenInfo, args: list[Term]):
-        self._pred_sym_token = pred_sym_token
-        self.pred_sym = pred_sym_token.string
-        self.args = args
-
-    def __repr__(self) -> str:
-        return f"Atom(pred_sym={self.pred_sym}, args={self.args})"
-
-    @property
-    def vars(self) -> list[VariableTerm]:
-        return [t for t in self.args if isinstance(t, VariableTerm)]
-
-
-class PositiveAtom(Premise, Atom):
-    def __init__(self, atom: Atom):
-        self.atom = atom
-
-    @property
-    def args(self) -> list[Term]:
-        return self.atom.args
-
-    def __repr__(self) -> str:
-        return f"Positive{self.atom}"
-
-
-class NegativeAtom(Premise, Atom):
-    def __init__(self, atom: Atom):
-        self.atom = atom
-
-    @property
-    def args(self) -> list[Term]:
-        return self.atom.args
-
-    def __repr__(self) -> str:
-        return f"Negative{self.atom}"
-
 
 class Clause:
     @classmethod
     def parse_one(cls, tokenizer: Tokenizer):
-        atom = Atom.parse(tokenizer)
+        head = Atom.parse(tokenizer)
 
         if tokenizer.try_consume("."):
-            return Fact(atom)
+            return Fact(head)
         elif tokenizer.try_consume(":"):
             body = [p for p in Premise.parse_all(tokenizer)]
-            return Rule(atom, body)
+            return Rule(head, body)
         else:
             tok = tokenizer.consume()
             raise ParseError(f"invalid terminator", tok)
@@ -216,31 +179,29 @@ class Clause:
                 break
 
 
-class Fact(Clause, Atom):
+class Fact(Clause):
     def __init__(self, atom: Atom):
-        self.atom = atom
+        self._atom = atom
         self.pred_sym = atom.pred_sym
-        self.arg_values = [a.value for a in self.atom.args]
-        self.arity = len(self.atom.args)
+        self.arity = atom.arity
+        self.arg_values = [a.value for a in atom.args]
 
     def validate(self) -> list[ValidationError]:
         return [
-            ValidationError("non-ground arg in Fact", arg.tok)
-            for arg in self.atom.args
-            if isinstance(arg, VariableTerm)
+            ValidationError("non-ground arg in Fact", var.tok)
+            for var in self._atom.vars
         ]
 
     def __repr__(self) -> str:
-        return f"Fact(pred_sym={self.atom.pred_sym}, args={self.atom.args})"
+        return f"Fact(pred_sym={self.pred_sym}, args={self._atom.args})"
 
 
 class Rule(Clause):
-    def __init__(self, head: Atom, body: list[Premise]):
+    def __init__(self, head: Atom, body: list[Atom]):
         self.head = head
         self.body = body
-        # TODO calculate arities more cleanly
         self.pred_sym = head.pred_sym
-        self.arity = len(head.args)
+        self.arity = head.arity
 
     def validate(self) -> list[ValidationError]:
         return self.validate_range_restriction() + self.validate_negation_safety()
@@ -252,8 +213,8 @@ class Rule(Clause):
         return [ValidationError("unrestricted head var", v) for v in unrestricted_vars]
 
     def validate_negation_safety(self) -> list[ValidationError]:
-        pos_vars = {v for p in self.body for v in p.vars if isinstance(p, PositiveAtom)}
-        neg_vars = {v for p in self.body for v in p.vars if isinstance(p, NegativeAtom)}
+        pos_vars = {v for p in self.body for v in p.vars if not p.negated}
+        neg_vars = {v for p in self.body for v in p.vars if p.negated}
         unsafe_vars = neg_vars - pos_vars
         return [ValidationError("unsafe negated var", v) for v in unsafe_vars]
 
@@ -273,12 +234,8 @@ class Program:
         self.facts = [c for c in self.clauses if isinstance(c, Fact)]
         self.rules = [c for c in self.clauses if isinstance(c, Rule)]
         grouped_facts = {}
-        # TODO add arity to key
         for fact in self.facts:
             grouped_facts.setdefault((fact.pred_sym, fact.arity), []).append(fact.arg_values)
-        self.edb = {}
-        for key, rows in grouped_facts.items():
-            self.edb[key] = pd.DataFrame(rows)
         self.edb = {key: pd.DataFrame(rows) for key, rows in grouped_facts.items()}
 
     def validate(self) -> list[ValidationError]:
@@ -301,6 +258,22 @@ def immcon(dbi: DatabaseInstance, rule: Rule) -> DatabaseInstance:
             if not isinstance(t, VariableTerm):
                 df = df[df[col] == t.value]
         tables.append(df)
-    # natural join all the tables
     dbi[rule.pred_sym, rule.arity] = reduce(pd.DataFrame.merge, tables)
+    # project result
     return dbi
+
+
+def parse(program: str) -> Program:
+    tokenizer = Tokenizer(program)
+    return Program.parse(tokenizer)
+
+
+p1 = parse('a(1 2).a(1 4).a(5 6).d(X Y Z): ~a(1 Y).')
+p1.validate()
+p2 = parse('''edge(a, b).
+              edge(b, c).
+              edge(c, d).
+              edge(d, c).
+              tc(X, Y) : edge(X, Y).
+              tc(X, Y) : tc(X, Z), tc(Z, Y).''')
+p2.validate()
