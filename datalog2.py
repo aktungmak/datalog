@@ -249,18 +249,38 @@ class Program:
         pass
 
 
-def immcon(dbi: DatabaseInstance, rule: Rule) -> DatabaseInstance:
+def immcon(dbi: DatabaseInstance, rule: Rule) -> pd.DataFrame:
     tables = []
     for p in rule.body:
+        if (p.pred_sym, p.arity) not in dbi:
+            # inner join with empty set results in empty set
+            return pd.DataFrame()
         df = dbi[(p.pred_sym, p.arity)]
-        df.columns = [t.name if isinstance(t, VariableTerm) else hash(t) for t in p.args]
         for col, t in zip(df.columns, p.args):
-            if not isinstance(t, VariableTerm):
-                df = df[df[col] == t.value]
+            if isinstance(t, VariableTerm):
+                # rename variable columns
+                df = df.rename(columns={col: t.name})
+            else:
+                # filter and drop constant columns
+                df = df[df[col] == t.value].drop(col, axis=1)
         tables.append(df)
-    dbi[rule.pred_sym, rule.arity] = reduce(pd.DataFrame.merge, tables)
-    # project result
-    return dbi
+    # intersection (inner join) of all premises
+    # TODO handle negation
+    joined = reduce(pd.DataFrame.merge, tables)
+    # project result columns
+    return joined[[v.name for v in rule.head.vars]]
+
+
+def fixpoint(prog: Program) -> DatabaseInstance:
+    final = prog.edb.copy()
+    prev = prog.edb.copy()
+    current = prog.edb.copy()
+    while True:
+        for rule in prog.rules:
+            current[rule.pred_sym, rule.arity] = immcon(edb, rule)
+
+        if all([df.equals(prev_edb.get(key)) for key, df in edb.items()]):
+            return final
 
 
 def parse(program: str) -> Program:
@@ -268,12 +288,14 @@ def parse(program: str) -> Program:
     return Program.parse(tokenizer)
 
 
-p1 = parse('a(1 2).a(1 4).a(5 6).d(X Y Z): ~a(1 Y).')
-p1.validate()
-p2 = parse('''edge(a, b).
-              edge(b, c).
-              edge(c, d).
-              edge(d, c).
-              tc(X, Y) : edge(X, Y).
-              tc(X, Y) : tc(X, Z), tc(Z, Y).''')
-p2.validate()
+if __name__ == '__main__':
+    p1 = parse('a(1 2).a(1 4).a(5 6).d(X Y Z): ~a(1 Y).')
+    assert(len(p1.validate()) > 0)
+    p2 = parse('''edge(a, b).
+                  edge(b, c).
+                  edge(c, d).
+                  edge(c, c).
+                  tc(X, Y) : edge(X, Y).
+                  tc(X, Y) : tc(X, Z), tc(Z, Y).''')
+    assert (p2.validate() == [])
+    print(fixpoint(p2))
