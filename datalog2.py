@@ -287,6 +287,12 @@ def parse(program: str) -> Program:
     tokenizer = Tokenizer(program)
     return Program.parse(tokenizer)
 
+def multiple_join(dfs):
+  def join(left, right):
+    on = list(set(left.columns) & set(right.columns))
+    return left.join(right, on=on, how='inner')
+
+  return reduce(join, [df1, df2, df3])
 
 if __name__ == '__main__':
     p1 = parse('a(1 2).a(1 4).a(5 6).d(X Y Z): ~a(1 Y).')
