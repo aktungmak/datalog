@@ -1,12 +1,14 @@
 import token
-from collections import deque
+from collections import deque, defaultdict
 from functools import reduce
 from io import StringIO
 from tokenize import generate_tokens, TokenInfo
 from typing import Optional
-import pandas as pd
 
-DatabaseInstance = dict[tuple[str, int], pd.DataFrame]
+import networkx as nx
+import pyspark
+from pyspark.sql import DataFrame
+import pyspark.sql.types as st
 
 
 class ParseError(Exception):
@@ -140,7 +142,7 @@ class Atom:
         return f"Atom(pred_sym={self.pred_sym}, args={self.args}, negated={self.negated})"
 
 
-class Premise:
+class Premise(Atom):
     @classmethod
     def parse_one(cls, tokenizer: Tokenizer) -> Atom:
         negated = tokenizer.try_consume("~")
@@ -188,7 +190,7 @@ class Fact(Clause):
 
     def validate(self) -> list[ValidationError]:
         return [
-            ValidationError("non-ground arg in Fact", var.tok)
+            ValidationError(f"non-ground arg '{var.tok.string}' in Fact", var.tok)
             for var in self._atom.vars
         ]
 
@@ -197,7 +199,7 @@ class Fact(Clause):
 
 
 class Rule(Clause):
-    def __init__(self, head: Atom, body: list[Atom]):
+    def __init__(self, head: Atom, body: list[Premise]):
         self.head = head
         self.body = body
         self.pred_sym = head.pred_sym
@@ -210,13 +212,13 @@ class Rule(Clause):
         head_vars = set(self.head.vars)
         body_vars = {v for p in self.body for v in p.vars}
         unrestricted_vars = head_vars - body_vars
-        return [ValidationError("unrestricted head var", v) for v in unrestricted_vars]
+        return [ValidationError(f"unrestricted head var '{v.name}'", v) for v in unrestricted_vars]
 
     def validate_negation_safety(self) -> list[ValidationError]:
         pos_vars = {v for p in self.body for v in p.vars if not p.negated}
         neg_vars = {v for p in self.body for v in p.vars if p.negated}
         unsafe_vars = neg_vars - pos_vars
-        return [ValidationError("unsafe negated var", v) for v in unsafe_vars]
+        return [ValidationError(f"unsafe negated var '{v.name}'", v) for v in unsafe_vars]
 
     def __repr__(self) -> str:
         return f"Rule(head={self.head}, body={self.body})"
@@ -225,83 +227,137 @@ class Rule(Clause):
 class Program:
 
     @classmethod
+    def parse_string(cls, program: str):
+        tokenizer = Tokenizer(program)
+        return Program.parse(tokenizer)
+
+    @classmethod
     def parse(cls, tokenizer: Tokenizer):
         clauses = [clause for clause in Clause.parse_all(tokenizer)]
         return Program(clauses)
 
     def __init__(self, clauses: list[Clause]):
         self.clauses = clauses
-        self.facts = [c for c in self.clauses if isinstance(c, Fact)]
-        self.rules = [c for c in self.clauses if isinstance(c, Rule)]
-        grouped_facts = {}
-        for fact in self.facts:
-            grouped_facts.setdefault((fact.pred_sym, fact.arity), []).append(fact.arg_values)
-        self.edb = {key: pd.DataFrame(rows) for key, rows in grouped_facts.items()}
+        self.facts = {(c.pred_sym, c.arity): c for c in self.clauses if isinstance(c, Fact)}
+        # todo handle multiple occurrences of the same rule as union
+        self.rules = {(c.pred_sym, c.arity): c for c in self.clauses if isinstance(c, Rule)}
+        # grouped_facts = {}
+        # for fact in self.facts:
+        #     grouped_facts.setdefault((fact.pred_sym, fact.arity), []).append(fact.arg_values)
+        self.dependency_graph = self._build_dependency_graph()
+        self.strata = self._stratify()
 
-    def validate(self) -> list[ValidationError]:
+    def get_rule(self, pred_sym: str, arity: int) -> Rule:
+        return self.rules[(pred_sym, arity)]
+
+    def _build_dependency_graph(self) -> nx.DiGraph:
+        g = nx.DiGraph()
+        for rule_key, rule in self.rules.items():
+            for premise in rule.body:
+                g.add_edge(rule_key, (premise.pred_sym, premise.arity))
+        return g
+
+    def _validate(self) -> list[ValidationError]:
         return sum([c.validate() for c in self.clauses], [])
+
+    def validate_nonrecursive(self) -> list[ValidationError]:
+        return sum([self._validate(), self._validate_is_dag()], [])
+
+    def _validate_is_dag(self):
+        if not nx.is_directed_acyclic_graph(self.dependency_graph):
+            return [ValidationError('Dependency graph is not acyclic')]
+        else:
+            return []
 
     def __repr__(self) -> str:
         return f"Program({self.clauses})"
 
-    def stratify(self) -> list:
+    def _stratify(self) -> list:
         # TODO stratify into a list of subprograms
         pass
 
 
-def immcon(dbi: DatabaseInstance, rule: Rule) -> pd.DataFrame:
-    tables = []
-    for p in rule.body:
-        if (p.pred_sym, p.arity) not in dbi:
-            # inner join with empty set results in empty set
-            return pd.DataFrame()
-        df = dbi[(p.pred_sym, p.arity)]
-        for col, t in zip(df.columns, p.args):
-            if isinstance(t, VariableTerm):
-                # rename variable columns
-                df = df.rename(columns={col: t.name})
+def multiple_join(dfs: list[DataFrame]) -> DataFrame:
+    def join(left, right):
+        on = list(set(left.columns) & set(right.columns))
+        return left.join(right, on=on, how='inner')
+
+    return reduce(join, dfs)
+
+
+class ExecutionError(Exception):
+    def __init__(self, message, tok):
+        super().__init__(self.message)
+
+
+class SparkDatalog:
+    def __init__(self, spark: pyspark.sql.SparkSession):
+        self.spark = spark
+
+    def premise_to_df(self, premise: Premise) -> DataFrame:
+        df = self.spark.read.table(premise.pred_sym)
+        if len(df.columns) != len(premise.args):
+            raise ExecutionError(f"mismatched arity, expected {premise.args} got {df.columns}")
+
+        for arg, col in zip(premise.args, df.columns):
+            if isinstance(arg, VariableTerm):
+                df = df.withColumnRenamed(col, arg.name)
             else:
-                # filter and drop constant columns
-                df = df[df[col] == t.value].drop(col, axis=1)
-        tables.append(df)
-    # intersection (inner join) of all premises
-    # TODO handle negation
-    joined = reduce(pd.DataFrame.merge, tables)
-    # project result columns
-    return joined[[v.name for v in rule.head.vars]]
+                df = df.filter(df[col] == arg.value)
+
+    def rule_to_df(rule: Rule, spark) -> DataFrame:
+        dfs = [premise_to_df(premise) for premise in rule.body]
+        df = multiple_join(dfs)
+
+    def rule_to_schema(rule: Rule):
+        fields = []
+        for arg in rule.head.args:
+            if isinstance(arg, StringTerm):
+                fields.append(st.StringType)
+            elif isinstance(arg, NumberTerm):
+                fields.append(st.NumericType)
+            else:
+                raise ExecutionError(f"unknown type {type(arg)}")
+        return st.StructType(fields)
 
 
-def fixpoint(prog: Program) -> DatabaseInstance:
-    final = prog.edb.copy()
-    prev = prog.edb.copy()
-    current = prog.edb.copy()
-    while True:
-        for rule in prog.rules:
-            current[rule.pred_sym, rule.arity] = immcon(edb, rule)
+def eval_nonrecursive(p: Program, q: Atom) -> DataFrame:
+    # validate not recursive
+    p.validate_nonrecursive()
+    # build query tree bottom up
 
-        if all([df.equals(prev_edb.get(key)) for key, df in edb.items()]):
-            return final
+    for clause in reversed(nx.topological_sort(p.dependency_graph)):
+        df = clause_to_df(clause)
 
 
-def parse(program: str) -> Program:
-    tokenizer = Tokenizer(program)
-    return Program.parse(tokenizer)
 
-def multiple_join(dfs):
-  def join(left, right):
-    on = list(set(left.columns) & set(right.columns))
-    return left.join(right, on=on, how='inner')
 
-  return reduce(join, [df1, df2, df3])
+
+def to_pyspark(self, program: Program, query: Atom):
+    for rule in program.rules:
+        # register a placeholder view
+        # we could just add these to a dict along with references to edb tables
+        self.spark.createDataFrame([], rule_to_schema(rule)).createOrReplaceTempView(f"{rule.pred_sym}_{rule.arity}")
+    rules = [rule_to_df(rule) for rule in program.rules]
+
+
+s1 = 'a(1 2).a(1 4).a(5 6).d(X Y Z): ~a(1 Y).'
+s2 = '''edge(a, b).
+edge(b, c).
+edge(c, d).
+edge(c, c).
+tc(X, Y) : edge(X, Y).
+tc(X, Y) : tc(X, Z), tc(Z, Y).
+'''
+s3 = '''a(X, Y): b(X), c(Y).
+b(X): d(X), e(X).
+c(X): d(X), f(X).
+'''
 
 if __name__ == '__main__':
-    p1 = parse('a(1 2).a(1 4).a(5 6).d(X Y Z): ~a(1 Y).')
-    assert(len(p1.validate()) > 0)
-    p2 = parse('''edge(a, b).
-                  edge(b, c).
-                  edge(c, d).
-                  edge(c, c).
-                  tc(X, Y) : edge(X, Y).
-                  tc(X, Y) : tc(X, Z), tc(Z, Y).''')
+    p1 = Program.parse_string(s1)
+    assert (len(p1.validate()) > 0)
+    p2 = Program.parse_string(s2)
     assert (p2.validate() == [])
-    print(fixpoint(p2))
+    print(p2.rules)
+    print(p2.dependency_graph().adj_dict)
