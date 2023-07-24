@@ -2,7 +2,7 @@ import token
 from collections import deque
 from io import StringIO
 from tokenize import generate_tokens, TokenInfo
-from typing import Optional
+from typing import Optional, Self
 
 import networkx as nx
 
@@ -17,9 +17,9 @@ class ParseError(Exception):
 
 
 class ValidationError(Exception):
-    def __init__(self, message, tok):
+    def __init__(self, message, term=None):
         self.message = message
-        self.tok = tok
+        self.term = term
         super().__init__(self.message)
 
 
@@ -50,7 +50,7 @@ class Tokenizer:
         # print(f"consume {expected} {self.last}")
         return self.last
 
-    def try_consume(self, expected: str, expected_type: Optional[int] = None) -> bool:
+    def try_consume(self, expected: str = None, expected_type: Optional[int] = None) -> bool:
         tok = self.consume()
         # print(f"try_consume {expected} {tok}")
         if tok.string == expected or tok.type == expected_type:
@@ -67,7 +67,10 @@ class Term:
         if tok.type == token.NAME and tok.string[0].isupper():
             return VariableTerm(tok)
         elif tok.type == token.NAME and tok.string[0].islower():
-            return StringTerm(tok)
+            if tokenizer.try_consume('<'):
+                return AggTerm.parse(tok, tokenizer)
+            else:
+                return StringTerm(tok)
         elif tok.type == token.STRING:
             return StringTerm(tok)
         elif tok.type == token.NUMBER:
@@ -76,16 +79,42 @@ class Term:
             raise ParseError("invalid term", tok)
 
     @classmethod
-    def parse_all(cls, tokenizer: Tokenizer):
+    def parse_all(cls, tokenizer: Tokenizer) -> list[Self]:
+        terms = []
         while True:
             if tokenizer.try_consume(")"):
                 break
-            yield Term.parse_one(tokenizer)
+            terms.append(Term.parse_one(tokenizer))
             tokenizer.try_consume(",")
+        return terms
+
+
+class AggTerm(Term):
+    @classmethod
+    def parse(cls, func: TokenInfo, tokenizer: Tokenizer) -> Self:
+        args = []
+        while True:
+            tok = tokenizer.consume()
+            if tok.string == '>':
+                return AggTerm(func, args)
+            elif tok.type == token.NAME and tok.string[0].isupper():
+                args.append(tok)
+            else:
+                raise ParseError("invalid aggregation parameter", tok)
+            tokenizer.try_consume(",")
+
+    def __init__(self, func: TokenInfo, args: list[TokenInfo] = []):
+        self.func_tok = func
+        self.arg_toks = args
+        self.func = func.string
+        self.args = [VariableTerm(arg) for arg in args]
+
+    def __repr__(self) -> str:
+        return f"AggTerm(func={self.func}, args={self.args})"
 
 
 class VariableTerm(Term):
-    def __init__(self, tok: TokenInfo, value=None):
+    def __init__(self, tok: TokenInfo = None, value=None):
         self.tok = tok
         self.name = tok.string
         self.value = value
@@ -105,6 +134,9 @@ class StringTerm(Term):
         self.tok = tok
         self.value = tok.string.strip('"')
 
+    def __eq__(self, other) -> bool:
+        return isinstance(other, StringTerm) and self.value == other.value
+
     def __repr__(self) -> str:
         return f"StringTerm(value={self.value})"
 
@@ -114,16 +146,25 @@ class NumberTerm(Term):
         self.tok = tok
         self.value = float(tok.string)
 
+    def __eq__(self, other) -> bool:
+        return isinstance(other, NumberTerm) and self.value == other.value
+
     def __repr__(self) -> str:
         return f"NumberTerm(value={self.value})"
 
 
 class Atom:
+
     @classmethod
-    def parse(cls, tokenizer: Tokenizer, negated: bool = False):
+    def parse_string(cls, atom: str) -> Self:
+        tokenizer = Tokenizer(atom)
+        return Atom.parse(tokenizer)
+
+    @classmethod
+    def parse(cls, tokenizer: Tokenizer, negated: bool = False) -> Self:
         pred_sym_token = tokenizer.consume()
         tokenizer.consume("(")
-        args = list(Term.parse_all(tokenizer))
+        args = Term.parse_all(tokenizer)
         return Atom(pred_sym_token, args, negated=negated)
 
     def __init__(self, pred_sym_token: TokenInfo, args: list[Term], negated=False):
@@ -140,41 +181,43 @@ class Atom:
 
 class Premise(Atom):
     @classmethod
-    def parse_one(cls, tokenizer: Tokenizer) -> Atom:
+    def parse_one(cls, tokenizer: Tokenizer) -> Self:
         negated = tokenizer.try_consume("~")
         return Atom.parse(tokenizer, negated=negated)
 
     @classmethod
-    def parse_all(cls, tokenizer: Tokenizer):
+    def parse_all(cls, tokenizer: Tokenizer) -> list[Self]:
+        premises = []
         while True:
-            yield Premise.parse_one(tokenizer)
-            if tokenizer.try_consume(","):
-                continue
-            else:
-                tokenizer.consume(".")
+            premises.append(Premise.parse_one(tokenizer))
+            tokenizer.try_consume(",")
+            if tokenizer.try_consume("."):
                 break
+        return premises
 
 
 class Clause:
     @classmethod
-    def parse_one(cls, tokenizer: Tokenizer):
+    def parse_one(cls, tokenizer: Tokenizer) -> Self:
         head = Atom.parse(tokenizer)
 
         if tokenizer.try_consume("."):
             return Fact(head)
         elif tokenizer.try_consume(":"):
-            body = [p for p in Premise.parse_all(tokenizer)]
+            body = Premise.parse_all(tokenizer)
             return Rule(head, body)
         else:
             tok = tokenizer.consume()
             raise ParseError(f"invalid terminator", tok)
 
     @classmethod
-    def parse_all(cls, tokenizer: Tokenizer):
+    def parse_all(cls, tokenizer: Tokenizer) -> list[Self]:
+        clauses = []
         while True:
-            yield Clause.parse_one(tokenizer)
-            if tokenizer.try_consume("", expected_type=token.ENDMARKER):
+            clauses.append(Clause.parse_one(tokenizer))
+            if tokenizer.try_consume(expected_type=token.ENDMARKER):
                 break
+        return clauses
 
 
 class Fact(Clause):
@@ -182,11 +225,11 @@ class Fact(Clause):
         self._atom = atom
         self.pred_sym = atom.pred_sym
         self.arity = atom.arity
-        self.arg_values = [a.value for a in atom.args]
+        self.args = atom.args
 
     def validate(self) -> list[ValidationError]:
         return [
-            ValidationError(f"non-ground arg '{var.tok.string}' in Fact", var.tok)
+            ValidationError(f"non-ground arg '{var.tok.string}' in Fact", var)
             for var in self._atom.vars
         ]
 
@@ -202,7 +245,8 @@ class Rule(Clause):
         self.arity = head.arity
 
     def validate(self) -> list[ValidationError]:
-        return self.validate_range_restriction() + self.validate_negation_safety()
+        return sum([self.validate_range_restriction(), self.validate_negation_safety(), self.validate_aggregation()],
+                   [])
 
     def validate_range_restriction(self) -> list[ValidationError]:
         head_vars = set(self.head.vars)
@@ -216,6 +260,15 @@ class Rule(Clause):
         unsafe_vars = neg_vars - pos_vars
         return [ValidationError(f"unsafe negated var '{v.name}'", v) for v in unsafe_vars]
 
+    def validate_aggregation(self):
+        errs = []
+        aggs = [arg for arg in self.head.args if isinstance(arg, AggTerm)]
+        body_vars = {v for p in self.body for v in p.vars}
+        for agg in aggs:
+            undefined_vars = set(agg.args) - body_vars
+            errs += [ValidationError(f"undefined var '{v.name}' used in aggregation", v) for v in undefined_vars]
+        return errs
+
     def __repr__(self) -> str:
         return f"Rule(head={self.head}, body={self.body})"
 
@@ -223,19 +276,18 @@ class Rule(Clause):
 class Program:
 
     @classmethod
-    def parse_string(cls, program: str):
+    def parse_string(cls, program: str) -> Self:
         tokenizer = Tokenizer(program)
         return Program.parse(tokenizer)
 
     @classmethod
-    def parse(cls, tokenizer: Tokenizer):
-        clauses = [clause for clause in Clause.parse_all(tokenizer)]
+    def parse(cls, tokenizer: Tokenizer) -> Self:
+        clauses = Clause.parse_all(tokenizer)
         return Program(clauses)
 
     def __init__(self, clauses: list[Clause]):
         self.clauses = clauses
-        self.facts = {(c.pred_sym, c.arity): c for c in self.clauses if isinstance(c, Fact)}
-        # todo handle multiple occurrences of the same rule as union
+        # self.facts = {(c.pred_sym, c.arity): c for c in self.clauses if isinstance(c, Fact)}
         self.rules = {(c.pred_sym, c.arity): c for c in self.clauses if isinstance(c, Rule)}
         # grouped_facts = {}
         # for fact in self.facts:
@@ -288,8 +340,8 @@ c(X): d(X), f(X).
 
 if __name__ == '__main__':
     p1 = Program.parse_string(s1)
-    assert (len(p1.validate()) > 0)
+    assert (len(p1.validate_nonrecursive()) > 0)
     p2 = Program.parse_string(s2)
-    assert (p2.validate() == [])
+    assert (p2.validate_nonrecursive() == [])
     print(p2.rules)
-    print(p2.dependency_graph().adj_dict)
+    print(p2.dependency_graph)
