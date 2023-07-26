@@ -1,5 +1,5 @@
 import token
-from collections import deque
+from collections import deque, defaultdict
 from io import StringIO
 from tokenize import generate_tokens, TokenInfo
 from typing import Optional, Self
@@ -229,7 +229,7 @@ class Fact(Clause):
 
     def validate(self) -> list[ValidationError]:
         return [
-            ValidationError(f"non-ground arg '{var.tok.string}' in Fact", var)
+            ValidationError(f"non-ground arg '{var.tok.string}' in fact", var)
             for var in self._atom.vars
         ]
 
@@ -287,23 +287,21 @@ class Program:
 
     def __init__(self, clauses: list[Clause]):
         self.clauses = clauses
-        # self.facts = {(c.pred_sym, c.arity): c for c in self.clauses if isinstance(c, Fact)}
-        self.rules = {(c.pred_sym, c.arity): c for c in self.clauses if isinstance(c, Rule)}
-        # grouped_facts = {}
-        # for fact in self.facts:
-        #     grouped_facts.setdefault((fact.pred_sym, fact.arity), []).append(fact.arg_values)
-        self.dependency_graph = self._build_dependency_graph()
-        self.strata = self._stratify()
+        self.facts = defaultdict(list)
+        self.rules = defaultdict(list)
+        for clause in clauses:
+            if isinstance(clause, Fact):
+                self.facts[(clause.pred_sym, clause.arity)].append(clause)
+            elif isinstance(clause, Rule):
+                self.rules[(clause.pred_sym, clause.arity)].append(clause)
+            else:
+                raise ValueError(f"not a clause: {clause}")
 
-    def get_rule(self, pred_sym: str, arity: int) -> Rule:
-        return self.rules[(pred_sym, arity)]
-
-    def _build_dependency_graph(self) -> nx.DiGraph:
-        g = nx.DiGraph()
-        for rule_key, rule in self.rules.items():
-            for premise in rule.body:
-                g.add_edge(rule_key, (premise.pred_sym, premise.arity))
-        return g
+        self.dependency_graph = nx.DiGraph()
+        for rule_key, rules in self.rules.items():
+            for rule in rules:
+                for premise in rule.body:
+                    self.dependency_graph.add_edge(rule_key, (premise.pred_sym, premise.arity))
 
     def _validate(self) -> list[ValidationError]:
         return sum([c.validate() for c in self.clauses], [])
@@ -319,10 +317,6 @@ class Program:
 
     def __repr__(self) -> str:
         return f"Program({self.clauses})"
-
-    def _stratify(self) -> list:
-        # TODO stratify into a list of subprograms
-        pass
 
 
 s1 = 'a(1 2).a(1 4).a(5 6).d(X Y Z): ~a(1 Y).'
