@@ -1,0 +1,11 @@
+good_fact(1, "str1",
+'str2', 1.0).
+
+bad_fact(2, variable).
+
+good_rule(a, b): premise1(a, 5), premise2(b, 6).
+
+bad_rule(q, y, x):
+    premise1(q, 8),
+    premise2(y, 9).
+
