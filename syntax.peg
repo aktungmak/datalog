@@ -1,0 +1,58 @@
+@class DatalogParser
+
+@subheader '''
+import token
+from tokenize import generate_tokens
+from pegen.tokenizer import Tokenizer
+import datalog_ast2 as dast
+
+def parse_number(n):
+    try:
+        return int(n)
+    except ValueError:
+        return float(n)
+
+
+def token_gen(readline):
+    """Whitespace is not significant in datalog so we filter out irrelevant tokens
+    This makes the grammar simpler."""
+    ignored_token_types = {token.NEWLINE, token.INDENT, token.DEDENT}
+    return filter(lambda tok: tok.type not in ignored_token_types, generate_tokens(readline))
+
+
+def parse_file(filename: str) -> dast.Program:
+    with open(filename) as file:
+        return _parse(file.readline)
+
+
+def parse_string(string: str) -> dast.Program:
+    return _parse(StringIO(string).readline)
+
+
+def _parse(readline) -> dast.Program:
+    tokenizer = Tokenizer(token_gen(readline), verbose=False)
+    parser = DatalogParser(tokenizer, verbose=False)
+    return parser.start()
+'''
+
+start: program
+
+program[dast.Program]: clauses=clause* {
+    dast.Program(clauses, LOCATIONS)
+}
+
+clause[dast.Clause]: fact | rule
+
+fact[dast.Fact]: atom=atom '.' { dast.Fact(atom, LOCATIONS) }
+
+rule[dast.Rule]: head=atom ':' body=(','.atom+) '.' {
+    dast.Rule(head, body, LOCATIONS)
+}
+
+atom[dast.Atom]: pred_sym=NAME '(' args=','.term+ ')' { dast.Atom(pred_sym.string, args, LOCATIONS) }
+
+term[dast.Term]: string_term | number_term | variable_term
+
+string_term[dast.StringTerm]: string=STRING { dast.StringTerm(string.string, LOCATIONS) }
+number_term[dast.NumberTerm]: number=NUMBER { dast.NumberTerm(parse_number(number.string), LOCATIONS) }
+variable_term[dast.VariableTerm]: variable=NAME { dast.VariableTerm(variable.string, LOCATIONS) }

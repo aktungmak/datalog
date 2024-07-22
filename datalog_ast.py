@@ -88,6 +88,16 @@ class Term:
             tokenizer.try_consume(",")
         return terms
 
+    def __eq__(self, other) -> bool:
+        if isinstance(self, VariableTerm) or isinstance(other, VariableTerm):
+            return True
+        elif isinstance(self, StringTerm) and isinstance(other, StringTerm):
+            return self.value == other.value
+        elif isinstance(self, NumberTerm) and isinstance(other, NumberTerm):
+            return self.value == other.value
+        else:
+            return False
+
 
 class AggTerm(Term):
     @classmethod
@@ -119,9 +129,6 @@ class VariableTerm(Term):
         self.name = tok.string
         self.value = value
 
-    def __eq__(self, other) -> bool:
-        return isinstance(other, VariableTerm) and self.name == other.name
-
     def __hash__(self) -> int:
         return hash(self.name)
 
@@ -134,9 +141,6 @@ class StringTerm(Term):
         self.tok = tok
         self.value = tok.string.strip('"')
 
-    def __eq__(self, other) -> bool:
-        return isinstance(other, StringTerm) and self.value == other.value
-
     def __repr__(self) -> str:
         return f"StringTerm(value={self.value})"
 
@@ -145,9 +149,6 @@ class NumberTerm(Term):
     def __init__(self, tok: TokenInfo):
         self.tok = tok
         self.value = float(tok.string)
-
-    def __eq__(self, other) -> bool:
-        return isinstance(other, NumberTerm) and self.value == other.value
 
     def __repr__(self) -> str:
         return f"NumberTerm(value={self.value})"
@@ -177,6 +178,12 @@ class Atom:
 
     def __repr__(self) -> str:
         return f"Atom(pred_sym={self.pred_sym}, args={self.args}, negated={self.negated})"
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, Atom) \
+               and self.pred_sym == other.pred_sym \
+               and self.arity == other.arity \
+               and self.args == other.args
 
 
 class Premise(Atom):
