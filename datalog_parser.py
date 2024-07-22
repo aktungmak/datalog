@@ -10,6 +10,7 @@ from typing import Any, Optional
 from pegen.parser import memoize, memoize_left_rec, logger, Parser
 
 import token
+from io import StringIO
 from tokenize import generate_tokens
 from pegen.tokenizer import Tokenizer
 import datalog_ast as dast
