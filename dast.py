@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from numbers import Number
 
@@ -73,13 +74,14 @@ class Rule(Clause):
 class Program(Node):
     clauses: list[Clause]
 
-    # def __post_init__(self):
-    #     self.dependency_graph = nx.DiGraph()
-    #     for rule in self.rules:
-    #         src_key = rule.pred_sym, rule.arity
-    #         for premise in rule.premises:
-    #             dst_key = premise.pred_sym, premise.arity
-    #             self.dependency_graph.add_edge(src_key, dst_key)
+    def __post_init__(self):
+        self.dependency_graph = nx.DiGraph()
+        for rule in self.rules:
+            src_key = rule.pred_sym, rule.arity
+            self.dependency_graph.add_node(src_key, node=rule)
+            for premise in rule.premises:
+                dst_key = premise.pred_sym, premise.arity
+                self.dependency_graph.add_edge(src_key, dst_key)
 
     @property
     def facts(self) -> list[Fact]:
@@ -88,3 +90,10 @@ class Program(Node):
     @property
     def rules(self) -> list[Rule]:
         return [c for c in self.clauses if isinstance(c, Rule)]
+
+    def lookup_clauses(self, pred_sym: str = None, arity: int = None) -> Iterator[Clause]:
+        """find all clauses with a particular name and arity"""
+        for clause in self.clauses:
+            if ((pred_sym is None or pred_sym == clause.pred_sym)
+                    and (arity is None or arity == clause.arity)):
+                yield clause
