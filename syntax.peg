@@ -40,21 +40,31 @@ def _parse(readline) -> dast.Program:
 start: program
 
 program[dast.Program]: clauses=clause* {
-    dast.Program(clauses, LOCATIONS)
+    dast.Program(clauses, location=dict(LOCATIONS))
 }
 
 clause[dast.Clause]: fact | rule
 
-fact[dast.Fact]: atom=atom '.' { dast.Fact(atom, LOCATIONS) }
-
-rule[dast.Rule]: head=atom ':' body=(','.atom+) '.' {
-    dast.Rule(head, body, LOCATIONS)
+fact[dast.Fact]: atom=atom '.' {
+    dast.Fact(atom, location=dict(LOCATIONS))
 }
 
-atom[dast.Atom]: pred_sym=NAME '(' args=','.term+ ')' { dast.Atom(pred_sym.string, args, LOCATIONS) }
+rule[dast.Rule]: head=atom ':' body=(','.atom+) '.' {
+    dast.Rule(head, body, location=dict(LOCATIONS))
+}
+
+atom[dast.Atom]: pred_sym=NAME '(' args=','.term+ ')' {
+    dast.Atom(pred_sym.string, args, location=dict(LOCATIONS))
+}
 
 term[dast.Term]: string_term | number_term | variable_term
 
-string_term[dast.StringTerm]: string=STRING { dast.StringTerm(string.string, LOCATIONS) }
-number_term[dast.NumberTerm]: number=NUMBER { dast.NumberTerm(parse_number(number.string), LOCATIONS) }
-variable_term[dast.VariableTerm]: variable=NAME { dast.VariableTerm(variable.string, LOCATIONS) }
+string_term[dast.StringTerm]: string=STRING {
+    dast.StringTerm(string.string[1:-1], location=dict(LOCATIONS))
+}
+number_term[dast.NumberTerm]: number=NUMBER {
+    dast.NumberTerm(parse_number(number.string), location=dict(LOCATIONS))
+}
+variable_term[dast.VariableTerm]: variable=NAME {
+    dast.VariableTerm(variable.string, location=dict(LOCATIONS))
+}

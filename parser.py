@@ -71,7 +71,7 @@ class DatalogParser(Parser):
         ):
             tok = self._tokenizer.get_last_non_whitespace_token()
             end_lineno, end_col_offset = tok.end
-            return dast . Program ( clauses , lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset );
+            return dast . Program ( clauses , location = dict ( lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset ) );
         self._reset(mark)
         return None;
 
@@ -104,7 +104,7 @@ class DatalogParser(Parser):
         ):
             tok = self._tokenizer.get_last_non_whitespace_token()
             end_lineno, end_col_offset = tok.end
-            return dast . Fact ( atom , lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset );
+            return dast . Fact ( atom , location = dict ( lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset ) );
         self._reset(mark)
         return None;
 
@@ -125,7 +125,7 @@ class DatalogParser(Parser):
         ):
             tok = self._tokenizer.get_last_non_whitespace_token()
             end_lineno, end_col_offset = tok.end
-            return dast . Rule ( head , body , lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset );
+            return dast . Rule ( head , body , location = dict ( lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset ) );
         self._reset(mark)
         return None;
 
@@ -146,7 +146,7 @@ class DatalogParser(Parser):
         ):
             tok = self._tokenizer.get_last_non_whitespace_token()
             end_lineno, end_col_offset = tok.end
-            return dast . Atom ( pred_sym . string , args , lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset );
+            return dast . Atom ( pred_sym . string , args , location = dict ( lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset ) );
         self._reset(mark)
         return None;
 
@@ -182,7 +182,7 @@ class DatalogParser(Parser):
         ):
             tok = self._tokenizer.get_last_non_whitespace_token()
             end_lineno, end_col_offset = tok.end
-            return dast . StringTerm ( string . string , lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset );
+            return dast . StringTerm ( string . string [1 : - 1] , location = dict ( lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset ) );
         self._reset(mark)
         return None;
 
@@ -197,7 +197,7 @@ class DatalogParser(Parser):
         ):
             tok = self._tokenizer.get_last_non_whitespace_token()
             end_lineno, end_col_offset = tok.end
-            return dast . NumberTerm ( parse_number ( number . string ) , lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset );
+            return dast . NumberTerm ( parse_number ( number . string ) , location = dict ( lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset ) );
         self._reset(mark)
         return None;
 
@@ -212,7 +212,7 @@ class DatalogParser(Parser):
         ):
             tok = self._tokenizer.get_last_non_whitespace_token()
             end_lineno, end_col_offset = tok.end
-            return dast . VariableTerm ( variable . string , lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset );
+            return dast . VariableTerm ( variable . string , location = dict ( lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset ) );
         self._reset(mark)
         return None;
 
