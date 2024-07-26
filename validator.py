@@ -17,11 +17,14 @@ class ValidationError(Exception):
 class NonGroundFactArgument(ValidationError):
     """All arguments of a fact should be ground"""
 
+
 class RangeRestriction(ValidationError):
     """All variables in a rule head must also appear in the body"""
 
+
 class UndefinedPremise(ValidationError):
     """All premises in the body of the rule must be defined"""
+
 
 class RecursiveRules(ValidationError):
     """Rules may not depend on each other recursively"""
@@ -50,7 +53,6 @@ class NonRecursiveValidator:
                         break
                 else:
                     yield RangeRestriction(f"{arg} not restricted in rule {rule.pred_sym}/{rule.arity}", arg)
-
 
     def _undefined_premise(self) -> Iterator[ValidationError]:
         clause_keys = {(c.pred_sym, c.arity) for c in self.program.clauses}
