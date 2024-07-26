@@ -5,7 +5,7 @@ import token
 from io import StringIO
 from tokenize import generate_tokens
 from pegen.tokenizer import Tokenizer
-import datalog_ast as dast
+import dast
 
 
 def parse_number(n):

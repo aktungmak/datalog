@@ -4,7 +4,7 @@ import pyspark
 import pyspark.sql.types as st
 from pyspark.sql import DataFrame
 
-import datalog_ast as ast
+import dast as ast
 
 
 def multiple_join(dfs: list[DataFrame]) -> DataFrame:

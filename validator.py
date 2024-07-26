@@ -3,7 +3,7 @@ from collections.abc import Iterator
 
 import networkx as nx
 
-from datalog_ast import Program
+from dast import Program
 
 
 class ValidationError(Exception):
