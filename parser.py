@@ -49,13 +49,49 @@ class DatalogParser(Parser):
 
     @memoize
     def start(self) -> Optional[Any]:
-        # start: program
+        # start: query | retraction | program
         # nullable=True
         mark = self._mark()
+        if (
+            (query := self.query())
+        ):
+            return query;
+        self._reset(mark)
+        if (
+            (retraction := self.retraction())
+        ):
+            return retraction;
+        self._reset(mark)
         if (
             (program := self.program())
         ):
             return program;
+        self._reset(mark)
+        return None;
+
+    @memoize
+    def query(self) -> Optional[dast . Atom]:
+        # query: atom '?'
+        mark = self._mark()
+        if (
+            (atom := self.atom())
+            and
+            (self.expect('?'))
+        ):
+            return atom;
+        self._reset(mark)
+        return None;
+
+    @memoize
+    def retraction(self) -> Optional[dast . Atom]:
+        # retraction: atom '!'
+        mark = self._mark()
+        if (
+            (atom := self.atom())
+            and
+            (self.expect('!'))
+        ):
+            return atom;
         self._reset(mark)
         return None;
 
@@ -110,7 +146,7 @@ class DatalogParser(Parser):
 
     @memoize
     def rule(self) -> Optional[dast . Rule]:
-        # rule: atom ':' (','.atom+) '.'
+        # rule: atom ':' (','.premise+) '.'
         mark = self._mark()
         tok = self._tokenizer.peek()
         start_lineno, start_col_offset = tok.start
@@ -147,6 +183,35 @@ class DatalogParser(Parser):
             tok = self._tokenizer.get_last_non_whitespace_token()
             end_lineno, end_col_offset = tok.end
             return dast . Atom ( pred_sym . string , args , location = dict ( lineno=start_lineno, col_offset=start_col_offset, end_lineno=end_lineno, end_col_offset=end_col_offset ) );
+        self._reset(mark)
+        return None;
+
+    @memoize
+    def negated_atom(self) -> Optional[dast . Atom]:
+        # negated_atom: '~' atom
+        mark = self._mark()
+        if (
+            (literal := self.expect('~'))
+            and
+            (atom := self.atom())
+        ):
+            return [literal, atom];
+        self._reset(mark)
+        return None;
+
+    @memoize
+    def premise(self) -> Optional[Any]:
+        # premise: atom | negated_atom
+        mark = self._mark()
+        if (
+            (atom := self.atom())
+        ):
+            return atom;
+        self._reset(mark)
+        if (
+            (negated_atom := self.negated_atom())
+        ):
+            return negated_atom;
         self._reset(mark)
         return None;
 
@@ -231,13 +296,13 @@ class DatalogParser(Parser):
 
     @memoize
     def _loop0_3(self) -> Optional[Any]:
-        # _loop0_3: ',' atom
+        # _loop0_3: ',' premise
         mark = self._mark()
         children = []
         while (
             (self.expect(','))
             and
-            (elem := self.atom())
+            (elem := self.premise())
         ):
             children.append(elem)
             mark = self._mark()
@@ -246,10 +311,10 @@ class DatalogParser(Parser):
 
     @memoize
     def _gather_2(self) -> Optional[Any]:
-        # _gather_2: atom _loop0_3
+        # _gather_2: premise _loop0_3
         mark = self._mark()
         if (
-            (elem := self.atom())
+            (elem := self.premise())
             is not None
             and
             (seq := self._loop0_3())

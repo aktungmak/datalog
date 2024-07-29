@@ -37,7 +37,11 @@ def _parse(readline) -> dast.Program:
     return parser.start()
 '''
 
-start: program
+start: query | retraction | program
+
+query[dast.Atom]: atom=atom '?' { atom }
+
+retraction[dast.Atom]: atom=atom '!' { atom }
 
 program[dast.Program]: clauses=clause* {
     dast.Program(clauses, location=dict(LOCATIONS))
@@ -49,13 +53,17 @@ fact[dast.Fact]: atom=atom '.' {
     dast.Fact(atom, location=dict(LOCATIONS))
 }
 
-rule[dast.Rule]: head=atom ':' body=(','.atom+) '.' {
+rule[dast.Rule]: head=atom ':' body=(','.premise+) '.' {
     dast.Rule(head, body, location=dict(LOCATIONS))
 }
 
 atom[dast.Atom]: pred_sym=NAME '(' args=','.term+ ')' {
     dast.Atom(pred_sym.string, args, location=dict(LOCATIONS))
 }
+
+negated_atom[dast.Atom]: '~' atom
+
+premise: atom | negated_atom
 
 term[dast.Term]: string_term | number_term | variable_term
 
