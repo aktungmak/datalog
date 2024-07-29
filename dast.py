@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from numbers import Number
+from typing import Any
 
 import networkx as nx
 
@@ -13,24 +14,29 @@ class Node:
 
 
 @dataclass
-class Term(Node):
-    pass
-
-
-@dataclass
-class StringTerm(Term):
-    value: str
-
-
-@dataclass
-class NumberTerm(Term):
-    value: Number
+class Term(Node): pass
 
 
 @dataclass
 class VariableTerm(Term):
     name: str
     value = None
+
+
+
+@dataclass
+class ConstantTerm(Term):
+    value: Any
+
+
+@dataclass
+class StringTerm(ConstantTerm):
+    value: str
+
+
+@dataclass
+class NumberTerm(ConstantTerm):
+    value: Number
 
 
 @dataclass
@@ -61,8 +67,7 @@ class Clause(Node):
 
 
 @dataclass
-class Fact(Clause):
-    pass
+class Fact(Clause): pass
 
 
 @dataclass
