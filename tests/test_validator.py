@@ -27,8 +27,14 @@ class NonRecursiveValidatorTests(unittest.TestCase):
     def test_recursive_rules(self):
         errors = self._parse_and_validate(
             """rule1(a): rule2(a).
-                   rule2(b): rule3(b).
-                   rule3(c): rule1(c).
+               rule2(b): rule3(b).
+               rule3(c): rule1(c).
             """)
+        self.assertEqual(1, len(errors))
+        self.assertIsInstance(errors[0], validator.RecursiveRules)
+
+    def test_self_recursive_rule(self):
+        errors = self._parse_and_validate(
+            """rule1(a): rule1(a).""")
         self.assertEqual(1, len(errors))
         self.assertIsInstance(errors[0], validator.RecursiveRules)
