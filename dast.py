@@ -96,9 +96,13 @@ class Program(Node):
     def rules(self) -> list[Rule]:
         return [c for c in self.clauses if isinstance(c, Rule)]
 
-    def lookup_clauses(self, pred_sym: str = None, arity: int = None) -> Iterator[Clause]:
-        """find all clauses with a particular name and arity"""
-        for clause in self.clauses:
-            if ((pred_sym is None or pred_sym == clause.pred_sym)
-                    and (arity is None or arity == clause.arity)):
-                yield clause
+    def unify(self, atom: Atom) -> Iterator[Rule]:
+        for rule in self.rules:
+            if (atom.pred_sym == rule.pred_sym
+                    and atom.arity == rule.arity
+                    and all(isinstance(atom_arg, VariableTerm)
+                            or isinstance(rule_arg, VariableTerm)
+                            or atom_arg.value == rule_arg.value
+                            for atom_arg, rule_arg in zip(atom.args, rule.head.args))):
+                yield rule
+
