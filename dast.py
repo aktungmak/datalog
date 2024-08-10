@@ -23,7 +23,6 @@ class VariableTerm(Term):
     value = None
 
 
-
 @dataclass
 class ConstantTerm(Term):
     value: Any
@@ -51,6 +50,16 @@ class Atom(Node):
     @property
     def variables(self) -> list[VariableTerm]:
         return [a for a in self.args if isinstance(a, VariableTerm)]
+
+    @property
+    def position_to_name(self) -> dict[int, str]:
+        return {i: arg.name
+                for i, arg in enumerate(self.args)
+                if isinstance(arg, VariableTerm)}
+
+    @property
+    def name_to_position(self) -> dict[str, int]:
+        return {v: k for k, v in self.position_to_name.items()}
 
 
 @dataclass
@@ -105,4 +114,3 @@ class Program(Node):
                             or atom_arg.value == rule_arg.value
                             for atom_arg, rule_arg in zip(atom.args, rule.head.args))):
                 yield rule
-

@@ -1,6 +1,7 @@
 import unittest
 
 import parser
+from dast import Atom, VariableTerm, NumberTerm
 
 
 class ProgramTests(unittest.TestCase):
@@ -28,3 +29,14 @@ class ProgramTests(unittest.TestCase):
         atom = parser.parse_string("c(N, M)?")
         result = self.prog.unify(atom)
         self.assertEqual(0, len(list(result)))
+
+
+class AtomTests(unittest.TestCase):
+    a = Atom(pred_sym="j",
+             args=[VariableTerm("m"), NumberTerm(88), VariableTerm("s")])
+
+    def test_position_to_name(self):
+        self.assertEqual({0: "m", 2: "s"}, self.a.position_to_name)
+
+    def test_name_to_position(self):
+        self.assertEqual({"m": 0, "s": 2}, self.a.name_to_position)
