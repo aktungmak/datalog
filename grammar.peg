@@ -22,16 +22,16 @@ def token_gen(readline):
     return filter(lambda tok: tok.type not in ignored_token_types, generate_tokens(readline))
 
 
-def parse_file(filename: str) -> dast.Program:
+def parse_file(filename: str) -> dast.Program | dast.Atom:
     with open(filename) as file:
         return _parse(file.readline)
 
 
-def parse_string(string: str) -> dast.Program:
+def parse_string(string: str) -> dast.Program | dast.Atom:
     return _parse(StringIO(string).readline)
 
 
-def _parse(readline) -> dast.Program:
+def _parse(readline) -> dast.Program | dast.Atom:
     tokenizer = Tokenizer(token_gen(readline), verbose=False)
     parser = DatalogParser(tokenizer, verbose=False)
     return parser.start()
