@@ -11,10 +11,17 @@ It can also provide traces of why particular rules succeeded or failed.
 
 There are several layers that transform code and data into the final output.
 
+### Layer 0: Grammar
+
+The grammar of the language is very similar to Python, so much so that we can
+use Python's PEG parser to parse the datalog code. The file `grammar.peg` is
+translated into python code using the command
+`python -m pegen grammar.peg -v -o parser.py`.
+
 ### Layer 1: Parser
 
-`parser.py` is generated from `grammar.peg`. It takes a datalog program as a
-file or string and produces an AST, as defined in `dast.py`.
+`parser.py` takes a datalog program as a file or string and produces an AST,
+as defined in `dast.py`.
 
 ### Layer 2: AST
 
@@ -39,8 +46,8 @@ appropriate validator already along with an optional EDB of additional facts,
 represented as a subclass of `EDB`.
 
 Once instantiated, the evaluator provides a `query()` method that takes an `Atom`
-as its argument. It will then return a `Relation` of results that could be 
-derived from the program and EDB.
+as its argument. It will then return a `Relation` of results that are derived
+from the program and EDB.
 
 ### Layer 5: EDB
 

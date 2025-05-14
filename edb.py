@@ -1,18 +1,15 @@
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Iterator
 from functools import reduce
 from operator import and_
 from typing import Self, Optional
 
 import pandas as pd
 
-from dast import Atom, VariableTerm, ConstantTerm, Term
+from dast import Atom, VariableTerm, ConstantTerm, Term, Fact
 
 
 class Relation(ABC):
-    @classmethod
-    @abstractmethod
-    def single_row(cls, **cols) -> Self: pass
-
     @property
     @abstractmethod
     def column_names(self) -> list[str]: pass
@@ -24,75 +21,109 @@ class Relation(ABC):
     def project(self, names: list[str]) -> Self: pass
 
     @abstractmethod
-    def rename(self, new_names: list[str]) -> Self: pass
+    def rename(self, new_names: dict[str, str]) -> Self: pass
 
     @abstractmethod
-    def join(self, other: Self) -> Self: pass
+    def join(self, other: Optional[Self]) -> Self: pass
 
     @abstractmethod
-    def union(self, other: Optional[Self]) -> Self: pass
+    def union(self, *others: Self) -> Self: pass
+
+    @abstractmethod
+    def cross(self, other: Optional[Self]) -> Self: pass
 
 
 class EDB(ABC):
-    def unify(self, query: Atom) -> Optional[Relation]:
-        rel = self.match_relation(query)
-        if rel is not None:
-            return rel.select(query).project([arg.name for arg in query.args if isinstance(arg, VariableTerm)])
+    def unify(self, query: Atom) -> Relation:
+        for rel in self.get_relations(query):
+            return rel.select(query).project([arg.name for arg in query.args
+                                              if isinstance(arg, VariableTerm)])
+
+    @staticmethod
+    def atom_as_relation(atom: Atom) -> Relation: pass
 
     @abstractmethod
-    def match_relation(self, query: Atom) -> Optional[Relation]:
-        pass
+    def get_relations(self, atom: Atom) -> Iterator[Relation]: pass
+
+    @abstractmethod
+    def add_relation(self, atom: Atom, relation: Relation): pass
+
+    @abstractmethod
+    def insert_facts(self, facts: Iterable[Fact]): pass
 
 
 class PandasRelation(Relation):
     def __init__(self, df: pd.DataFrame):
         self._df = df
 
-    @classmethod
-    def single_row(cls, **cols):
-        df = pd.DataFrame([cols])
-        return PandasRelation(df)
-
     @property
     def column_names(self) -> list[str]:
         return list(self._df.columns)
 
-    def select(self, terms: list[Term]) -> Self:
+    def select(self, query: Atom) -> Self:
         df = self._df
-        assert len(terms) == self._df.shape[1]
         conditions = [df.iloc[:, i] == term.value
-                      for i, term in enumerate(terms)
+                      for i, term in enumerate(query.args)
                       if isinstance(term, ConstantTerm)]
+        print(conditions)
         if len(conditions):
-            df = df[reduce(and_, conditions)]
+            return PandasRelation(df[reduce(and_, conditions)])
         else:
-            df = df.iloc[:0]
-        return PandasRelation(df)
+            return self
 
-    def project(self, names: list[str]) -> Self:
+    def project(self, names: Iterable[str]) -> Self:
         return PandasRelation(self._df.filter(names))
 
-    def rename(self, new_names: list[str]) -> Self:
-        if len(new_names) != len(self._df.columns):
-            raise ValueError(f"{len(new_names)} names provided but relation has {len(self._df.columns)} columns")
-        return PandasRelation(self._df.set_axis(new_names, axis=1))
+    def rename(self, new_names: dict[str, str]) -> Self:
+        return PandasRelation(self._df.rename(new_names))
 
-    def join(self, other: Self) -> Self:
-        return PandasRelation(self._df.merge(other._df))
+    def join(self, other: Optional[Self]) -> Self:
+        if other is None:
+            return self
+        else:
+            return PandasRelation(self._df.merge(other._df))
 
     def union(*relations: Self) -> Self:
         return PandasRelation(pd.concat([rel._df for rel in relations]))
+
+    def cross(self, other: Optional[Self]) -> Self:
+        if other is None:
+            return self
+        else:
+            return PandasRelation(self._df.merge(other._df, how="cross"))
 
     def __len__(self):
         return len(self._df)
 
     def __repr__(self):
-        return f"<PandasRelation({', '.join(self._df.columns)}) with {self._df.shape[0]} rows"
+        return f"<PandasRelation({', '.join(self._df.columns)})> with {len(self)} rows"
 
 
 class PandasEDB(EDB):
-    def __init__(self, dataframes: dict[tuple[str, int], list[pd.DataFrame]] = None):
-        self._dfs = {k: [PandasRelation(df) for df in dfs] for k, dfs in dataframes.items()}
+    def __init__(self, dataframes: dict[tuple[str, int], pd.DataFrame] = None):
+        if dataframes is None:
+            self._dfs = {}
+        else:
+            self._dfs = {k: PandasRelation(df)
+                         for k, df in dataframes.items()}
 
-    def match_relations(self, pred_sym: str, arity: int) -> list[Relation]:
-        return self._dfs.get((pred_sym, arity), [])
+    @staticmethod
+    def atom_as_relation(atom: Atom) -> PandasRelation:
+        row = (arg.value for arg in atom.args if isinstance(arg, ConstantTerm))
+        df = pd.DataFrame([row])
+        return PandasRelation(df)
+
+    def get_relation(self, atom: Atom) -> Optional[PandasRelation]:
+        return self._dfs.get((atom.pred_sym, atom.arity))
+
+    def add_relation(self, atom: Atom, relation: PandasRelation):
+        self._dfs[(atom.pred_sym, atom.arity)] = relation
+
+    # TODO batch together facts with same signature
+    def insert_facts(self, facts: Iterable[Fact]):
+        for fact in facts:
+            new_rel = self.atom_as_relation(fact.head)
+            old_rel = self.get_relation(fact.head)
+            if old_rel is not None:
+                new_rel = new_rel.union(old_rel)
+            self.add_relation(fact.head, new_rel)
