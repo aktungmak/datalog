@@ -2,7 +2,7 @@
 
 This repo contains a datalog interpreter written in Python. It is suitable for
 validating and defining complex configuration rules in a user friendly way,
-as well as defining and evaluating complex buisiness logic without layers and
+as well as defining and evaluating complex business logic without layers and
 layers of if-else statements.
 
 It can also provide traces of why particular rules succeeded or failed.
@@ -21,7 +21,7 @@ translated into python code using the command
 ### Layer 1: Parser
 
 `parser.py` takes a datalog program as a file or string and produces an AST,
-as defined in `dast.py`.
+as defined in `dast.py`. It is generated automatically from `grammar.peg`.
 
 ### Layer 2: AST
 
@@ -36,8 +36,8 @@ on the variant of datalog we are expecting to evaluate, e.g. some things are
 allowed in stratified datalog with negation that would not be acceptable in 
 non-recursive datalog.
 
-The classes in `validator.py` take an AST as input and produce a (possibly
-empty) iterator of errors with the program.
+The classes in `validator.py` take an AST as input and produce an iterator of
+errors with the program (if there are any).
 
 ### Layer 4: Evaluator
 
@@ -54,6 +54,8 @@ from the program and EDB.
 To store the facts themselves, implementations of the abstract class `EDB` use
 Pandas DataFrames, SQLite tables or other options to provide the underlying
 select, project, join and union (SPJU) operations needed to compute the result.
+The EDB contains Relations which actually implement the SPJU algebra and contain
+the underlying data.
 
 The main goal of this class is to abstract away the details of the underlying
 engine so the other layers are not aware of how the SPJU operations are being
