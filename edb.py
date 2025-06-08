@@ -14,8 +14,15 @@ class Relation(ABC):
     @abstractmethod
     def column_names(self) -> list[str]: pass
 
+    @property
+    def arity(self) -> int:
+        return len(self.column_names)
+
     @abstractmethod
-    def select(self, query: Atom) -> Self: pass
+    def select(self, query: Atom) -> Self:
+        """select tuples matching the constant terms, return only variable
+         terms renamed according to the query atom"""
+        pass
 
     @abstractmethod
     def project(self, names: list[str]) -> Self: pass
@@ -35,15 +42,22 @@ class Relation(ABC):
 
 class EDB(ABC):
     def unify(self, query: Atom) -> Relation:
-        for rel in self.get_relations(query):
-            return rel.select(query).project([arg.name for arg in query.args
-                                              if isinstance(arg, VariableTerm)])
+        rel = self.get_relation(query)
+        if rel is None:
+            return self.empty_relation(query)
+        return rel.select(query)  # .rename(["L", "M"])
+        # rename
+        return rel.select(query).rename([arg.name for arg in query.args
+                                          if isinstance(arg, VariableTerm)])
 
     @staticmethod
     def atom_as_relation(atom: Atom) -> Relation: pass
 
     @abstractmethod
-    def get_relations(self, atom: Atom) -> Iterator[Relation]: pass
+    def empty_relation(self, atom: Atom) -> Relation: pass
+
+    @abstractmethod
+    def get_relation(self, atom: Atom) -> Optional[Relation]: pass
 
     @abstractmethod
     def add_relation(self, atom: Atom, relation: Relation): pass
@@ -53,6 +67,7 @@ class EDB(ABC):
 
 
 class PandasRelation(Relation):
+
     def __init__(self, df: pd.DataFrame):
         self._df = df
 
@@ -65,11 +80,14 @@ class PandasRelation(Relation):
         conditions = [df.iloc[:, i] == term.value
                       for i, term in enumerate(query.args)
                       if isinstance(term, ConstantTerm)]
-        print(conditions)
+        ixs = query.position_to_name.keys()
+        names = query.position_to_name.values()
         if len(conditions):
-            return PandasRelation(df[reduce(and_, conditions)])
-        else:
-            return self
+            df = df[reduce(and_, conditions)]
+        df = df.iloc[:, list(ixs)]
+        df.columns = names
+
+        return PandasRelation(df)
 
     def project(self, names: Iterable[str]) -> Self:
         return PandasRelation(self._df.filter(names))
@@ -113,11 +131,20 @@ class PandasEDB(EDB):
         df = pd.DataFrame([row])
         return PandasRelation(df)
 
+    def empty_relation(self, atom: Atom) -> PandasRelation:
+        df = pd.DataFrame({term.name: [] for term in atom.args
+                           if isinstance(term, VariableTerm)})
+        return PandasRelation(df)
+
     def get_relation(self, atom: Atom) -> Optional[PandasRelation]:
         return self._dfs.get((atom.pred_sym, atom.arity))
 
-    def add_relation(self, atom: Atom, relation: PandasRelation):
-        self._dfs[(atom.pred_sym, atom.arity)] = relation
+    def add_relation(self, pred_sym: str, relation: PandasRelation):
+        key = pred_sym, relation.arity
+        if key in self._dfs:
+            relation = self._dfs[key].union(relation)
+
+        self._dfs[key] = relation
 
     # TODO batch together facts with same signature
     def insert_facts(self, facts: Iterable[Fact]):
@@ -126,4 +153,4 @@ class PandasEDB(EDB):
             old_rel = self.get_relation(fact.head)
             if old_rel is not None:
                 new_rel = new_rel.union(old_rel)
-            self.add_relation(fact.head, new_rel)
+            self.add_relation(fact.head.pred_sym, new_rel)
